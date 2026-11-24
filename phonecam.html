@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Webcam</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;box-sizing:border-box}
+  h1{font-size:1.1rem;margin:0 0 12px}
+  video{width:100%;max-width:480px;background:#000;border-radius:8px;display:block}
+  textarea{width:100%;max-width:480px;height:90px;margin:8px 0;font-family:monospace;font-size:12px}
+  button{font:inherit;padding:.6em 1.2em;border:0;border-radius:8px;background:#4cc9a7;color:#063;font-weight:600;margin:4px 4px 4px 0}
+  .mode{margin-bottom:16px}
+  label{margin-right:16px}
+  .step{opacity:.75;font-size:.85rem;margin:4px 0}
+</style>
+</head>
+<body>
+<h1>📷 Phone Webcam (local network, no server)</h1>
+
+<div class="mode">
+  <label><input type="radio" name="mode" value="cam" checked> This is the CAMERA phone</label>
+  <label><input type="radio" name="mode" value="view"> This is the VIEWER phone</label>
+</div>
+
+<div id="camUI">
+  <p class="step">1. Tap "Start camera", allow permission.</p>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <button id="startCam">Start camera</button>
+  <p class="step">2. Tap "Create invite code", then copy it and send it to the viewer phone (e.g. paste into a chat or read it aloud) — only needs to happen once per session, on the same wifi.</p>
+  <button id="createOffer" disabled>Create invite code</button>
+  <textarea id="offerBox" placeholder="Invite code appears here" readonly></textarea>
+  <p class="step">3. Paste the reply code from the viewer phone here, then tap "Connect".</p>
+  <textarea id="answerBox" placeholder="Paste viewer's reply code here"></textarea>
+  <button id="connectCam" disabled>Connect</button>
+</div>
+
+<div id="viewUI" style="display:none">
+  <p class="step">1. Paste the invite code from the camera phone here.</p>
+  <textarea id="offerIn" placeholder="Paste camera's invite code here"></textarea>
+  <button id="acceptOffer">Accept invite</button>
+  <p class="step">2. Copy the reply code below and send it back to the camera phone.</p>
+  <textarea id="answerOut" placeholder="Reply code appears here" readonly></textarea>
+  <p class="step">3. Once the camera phone connects, the live video appears below.</p>
+  <video id="remoteVideo" autoplay playsinline></video>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const camUI = $('#camUI'), viewUI = $('#viewUI');
+document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
+  const isCam = document.querySelector('input[name=mode]:checked').value === 'cam';
+  camUI.style.display = isCam ? '' : 'none';
+  viewUI.style.display = isCam ? 'none' : '';
+});
+
+// A public STUN server just helps find the network path; no video/audio data goes through it.
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function encode(obj){ return btoa(encodeURIComponent(JSON.stringify(obj))); }
+function decode(str){ return JSON.parse(decodeURIComponent(atob(str.trim()))); }
+
+async function waitForIce(pc){
+  if (pc.iceGatheringState === 'complete') return;
+  await new Promise(resolve => {
+    pc.addEventListener('icegatheringstatechange', function check(){
+      if (pc.iceGatheringState === 'complete'){ pc.removeEventListener('icegatheringstatechange', check); resolve(); }
+    });
+  });
+}
+
+/* ---------- CAMERA SIDE ---------- */
+let camPC, localStream;
+$('#startCam').onclick = async () => {
+  localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+  $('#localVideo').srcObject = localStream;
+  $('#createOffer').disabled = false;
+};
+
+$('#createOffer').onclick = async () => {
+  camPC = new RTCPeerConnection(rtcConfig);
+  localStream.getTracks().forEach(t => camPC.addTrack(t, localStream));
+  const offer = await camPC.createOffer();
+  await camPC.setLocalDescription(offer);
+  await waitForIce(camPC);
+  $('#offerBox').value = encode(camPC.localDescription);
+  $('#connectCam').disabled = false;
+};
+
+$('#connectCam').onclick = async () => {
+  const answer = decode($('#answerBox').value);
+  await camPC.setRemoteDescription(answer);
+};
+
+/* ---------- VIEWER SIDE ---------- */
+let viewPC;
+$('#acceptOffer').onclick = async () => {
+  const offer = decode($('#offerIn').value);
+  viewPC = new RTCPeerConnection(rtcConfig);
+  viewPC.ontrack = (e) => { $('#remoteVideo').srcObject = e.streams[0]; };
+  await viewPC.setRemoteDescription(offer);
+  const answer = await viewPC.createAnswer();
+  await viewPC.setLocalDescription(answer);
+  await waitForIce(viewPC);
+  $('#answerOut').value = encode(viewPC.localDescription);
+};
+</script>
+</body>
+</html>
